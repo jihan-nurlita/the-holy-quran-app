@@ -5,6 +5,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+
 import 'package:the_holy_quran/models/ayat.dart';
 import 'package:the_holy_quran/models/surah.dart';
 
@@ -25,7 +27,6 @@ class DetailScreen extends StatefulWidget {
 class _DetailScreenState extends State<DetailScreen> {
   late int currentSurah;
   late int currentAyat;
-  late Surah surah;
 
   late AudioPlayer _audioPlayer;
   int? _playingAyat;
@@ -33,7 +34,11 @@ class _DetailScreenState extends State<DetailScreen> {
   late final int surahNumber;
   late Future<Surah> _surahFuture;
 
-  final Map<int, GlobalKey> _ayatKeys = {};
+  // Controller untuk scroll ke ayat tertentu.
+  final ItemScrollController _itemScrollController = ItemScrollController();
+
+  final ItemPositionsListener _itemPositionsListener =
+      ItemPositionsListener.create();
 
   int? lastAyat;
   bool _hasScrolled = false;
@@ -52,11 +57,11 @@ class _DetailScreenState extends State<DetailScreen> {
     _audioPlayer.setReleaseMode(ReleaseMode.stop);
 
     _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) {
-        setState(() {
-          _playingAyat = null;
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        _playingAyat = null;
+      });
     });
 
     _surahFuture = _getDetailSurah();
@@ -70,6 +75,7 @@ class _DetailScreenState extends State<DetailScreen> {
     super.dispose();
   }
 
+  // Menghitung nomor ayat global untuk audio Al-Quran.
   int _globalAyatNumber(int surah, int ayat) {
     const startAyat = [
       0,
@@ -107,33 +113,63 @@ class _DetailScreenState extends State<DetailScreen> {
     return startAyat[surah - 1] + ayat;
   }
 
+  // Memuat penanda ayat terakhir yang dibaca.
   Future<void> _loadLastAyat() async {
     final prefs = await SharedPreferences.getInstance();
 
     if (!mounted) return;
 
     setState(() {
-      lastAyat = prefs.getInt('last_ayat_$surahNumber');
+      lastAyat = widget.lastAyat ?? prefs.getInt('last_ayat_$surahNumber');
+
       _hasScrolled = false;
     });
   }
 
-  void _scrollToLastAyatOnce() {
-    if (_hasScrolled) return;
-    if (lastAyat == null) return;
+  // Scroll otomatis menuju ayat terakhir dibaca.
+  void _scrollToLastAyat(Surah surahData) {
+    if (_hasScrolled || lastAyat == null) return;
+
+    final listAyat = surahData.ayat;
+
+    if (listAyat == null || listAyat.isEmpty) return;
+
+    // Offset 1 untuk Surah Al-Fatihah karena item pertama
+    // pada data API dilewati sesuai kode awal.
+    final int listAyatOffset = surahNumber == 1 ? 1 : 0;
+
+    // Cari posisi ayat berdasarkan nomor ayat.
+    final int targetAyatIndex = listAyat.indexWhere(
+      (element) => element.nomor == lastAyat,
+    );
+
+    if (targetAyatIndex == -1) return;
+
+    // Posisi indeks pada daftar ayat yang ditampilkan.
+    final int displayedAyatIndex = targetAyatIndex - listAyatOffset;
+
+    if (displayedAyatIndex < 0) return;
+
+    // Item pertama adalah banner surah.
+    final int targetItemIndex = displayedAyatIndex + 1;
+
+    final int totalAyatCount =
+        surahData.jumlahAyat + (surahNumber == 1 ? -1 : 0);
+
+    if (displayedAyatIndex >= totalAyatCount) return;
+
+    _hasScrolled = true;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final key = _ayatKeys[lastAyat!];
+      if (!mounted) return;
 
-      if (key?.currentContext != null) {
-        Scrollable.ensureVisible(
-          key!.currentContext!,
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOut,
-          alignment: 0.2,
+      if (_itemScrollController.isAttached) {
+        _itemScrollController.scrollTo(
+          index: targetItemIndex,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOutCubic,
+          alignment: 0.0,
         );
-
-        _hasScrolled = true;
       }
     });
   }
@@ -150,23 +186,84 @@ class _DetailScreenState extends State<DetailScreen> {
   Widget build(BuildContext context) {
     return FutureBuilder<Surah>(
       future: _surahFuture,
-      initialData: null,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             backgroundColor: Color(0xffFAF7F0),
+            body: Center(
+              child: CircularProgressIndicator(
+                color: Color(0xff8B5E3C),
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Scaffold(
+            backgroundColor: const Color(0xffFAF7F0),
+            appBar: AppBar(
+              backgroundColor: const Color(0xffFAF7F0),
+              elevation: 0,
+              leading: IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: Color(0xff8B5E3C),
+                ),
+              ),
+            ),
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.wifi_off,
+                    size: 48,
+                    color: Color(0xff8B5E3C),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Gagal memuat data surah.',
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xff8B5E3C),
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        _surahFuture = _getDetailSurah();
+                      });
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xff8B5E3C),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Coba Lagi'),
+                  ),
+                ],
+              ),
+            ),
           );
         }
 
         final Surah surah = snapshot.data!;
 
-        if (!_hasScrolled &&
-            lastAyat != null &&
-            _ayatKeys.containsKey(lastAyat)) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToLastAyatOnce();
-          });
+        // Scroll otomatis setelah data surah dan penanda tersedia.
+        if (!_hasScrolled && lastAyat != null) {
+          _scrollToLastAyat(surah);
         }
+
+        // Offset untuk Surah Al-Fatihah.
+        final int listAyatOffset = surahNumber == 1 ? 1 : 0;
+
+        // Jumlah ayat yang benar-benar ditampilkan.
+        final int totalAyatCount =
+            surah.jumlahAyat + (surahNumber == 1 ? -1 : 0);
+
+        // Satu item tambahan untuk banner surah.
+        final int totalItemCount = totalAyatCount + 1;
 
         return Scaffold(
           backgroundColor: const Color(0xffFAF7F0),
@@ -174,45 +271,36 @@ class _DetailScreenState extends State<DetailScreen> {
             context: context,
             Surah: surah,
           ),
-          body: NestedScrollView(
-            headerSliverBuilder: (
-              context,
-              innerBoxIsScrolled,
-            ) =>
-                [
-              SliverToBoxAdapter(
-                child: _details(
-                  surah: surah,
-                ),
-              ),
-            ],
-            body: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 24,
-              ),
-              child: ListView.separated(
-                itemBuilder: (context, index) {
-                  final ayat = surah.ayat!.elementAt(
-                    index + (surahNumber == 1 ? 1 : 0),
+          body: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 24,
+            ),
+            child: ScrollablePositionedList.builder(
+              itemScrollController: _itemScrollController,
+              itemPositionsListener: _itemPositionsListener,
+              itemCount: totalItemCount,
+              itemBuilder: (context, index) {
+                // Item pertama adalah banner informasi surah.
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(
+                      bottom: 16,
+                    ),
+                    child: _details(
+                      surah: surah,
+                    ),
                   );
+                }
 
-                  final ayatKey = _ayatKeys.putIfAbsent(
-                    ayat.nomor,
-                    () => GlobalKey(),
-                  );
+                // Item berikutnya adalah daftar ayat.
+                final int ayatIndex = (index - 1) + listAyatOffset;
 
-                  return _ayatItem(
-                    key: ayatKey,
-                    ayat: ayat,
-                  );
-                },
-                itemCount: surah.jumlahAyat + (surahNumber == 1 ? -1 : 0),
-                separatorBuilder: (
-                  context,
-                  index,
-                ) =>
-                    const SizedBox.shrink(),
-              ),
+                final Ayat ayat = surah.ayat!.elementAt(ayatIndex);
+
+                return _ayatItem(
+                  ayat: ayat,
+                );
+              },
             ),
           ),
         );
@@ -221,14 +309,12 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Widget _ayatItem({
-    required Key? key,
     required Ayat ayat,
   }) {
     final bool isLastRead = ayat.nomor == lastAyat;
     final bool isPlaying = ayat.nomor == _playingAyat;
 
     return Padding(
-      key: key,
       padding: const EdgeInsets.only(
         top: 24,
       ),
@@ -285,7 +371,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 // AUDIO
                 InkWell(
                   onTap: () async {
-                    final globalAyat = _globalAyatNumber(
+                    final int globalAyat = _globalAyatNumber(
                       surahNumber,
                       ayat.nomor,
                     );
@@ -293,11 +379,11 @@ class _DetailScreenState extends State<DetailScreen> {
                     if (_playingAyat == ayat.nomor) {
                       await _audioPlayer.pause();
 
-                      if (mounted) {
-                        setState(() {
-                          _playingAyat = null;
-                        });
-                      }
+                      if (!mounted) return;
+
+                      setState(() {
+                        _playingAyat = null;
+                      });
                     } else {
                       try {
                         await _audioPlayer.stop();
@@ -308,14 +394,22 @@ class _DetailScreenState extends State<DetailScreen> {
                           ),
                         );
 
-                        if (mounted) {
-                          setState(() {
-                            _playingAyat = ayat.nomor;
-                          });
-                        }
+                        if (!mounted) return;
+
+                        setState(() {
+                          _playingAyat = ayat.nomor;
+                        });
                       } catch (e) {
-                        debugPrint(
-                          'ERROR AUDIO: $e',
+                        debugPrint('ERROR AUDIO: $e');
+
+                        if (!mounted) return;
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Gagal memutar audio ayat.',
+                            ),
+                          ),
                         );
                       }
                     }
@@ -343,29 +437,23 @@ class _DetailScreenState extends State<DetailScreen> {
                       final currentLastSurah = prefs.getInt('last_surah');
 
                       if (currentLastSurah == surahNumber) {
-                        await prefs.remove(
-                          'last_surah',
-                        );
+                        await prefs.remove('last_surah');
                       }
 
-                      if (mounted) {
-                        setState(() {
-                          lastAyat = null;
-                        });
-                      }
+                      if (!mounted) return;
 
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Penanda terakhir dibaca dihapus',
-                            ),
-                            duration: Duration(
-                              seconds: 2,
-                            ),
+                      setState(() {
+                        lastAyat = null;
+                      });
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Penanda terakhir dibaca dihapus',
                           ),
-                        );
-                      }
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
                     } else {
                       await prefs.setInt(
                         'last_surah',
@@ -377,24 +465,20 @@ class _DetailScreenState extends State<DetailScreen> {
                         ayat.nomor,
                       );
 
-                      if (mounted) {
-                        setState(() {
-                          lastAyat = ayat.nomor;
-                        });
-                      }
+                      if (!mounted) return;
 
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Terakhir dibaca: Surah $surahNumber Ayat ${ayat.nomor}',
-                            ),
-                            duration: const Duration(
-                              seconds: 2,
-                            ),
+                      setState(() {
+                        lastAyat = ayat.nomor;
+                      });
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Terakhir dibaca: Surah $surahNumber Ayat ${ayat.nomor}',
                           ),
-                        );
-                      }
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
                     }
                   },
                   child: Icon(
@@ -405,6 +489,7 @@ class _DetailScreenState extends State<DetailScreen> {
               ],
             ),
           ),
+
           if (isPlaying)
             Padding(
               padding: const EdgeInsets.only(
@@ -420,6 +505,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 ),
               ),
             ),
+
           if (isLastRead)
             Padding(
               padding: const EdgeInsets.only(
@@ -435,7 +521,10 @@ class _DetailScreenState extends State<DetailScreen> {
                 ),
               ),
             ),
+
           const SizedBox(height: 24),
+
+          // ARAB
           Text(
             ayat.ar,
             style: GoogleFonts.amiri(
@@ -446,7 +535,10 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
             textAlign: TextAlign.right,
           ),
+
           const SizedBox(height: 16),
+
+          // TERJEMAHAN
           Text(
             ayat.idn,
             style: GoogleFonts.poppins(
@@ -460,12 +552,13 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  // BANNER SURAH - WARNA ASLI VERSI COKELAT
   Widget _details({
     required Surah surah,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: 24,
+        horizontal: 0,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
@@ -476,7 +569,7 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
           child: Stack(
             children: [
-              // IMAGE QURAN
+              // GAMBAR QURAN
               Positioned(
                 bottom: 0,
                 right: 0,
@@ -490,7 +583,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 ),
               ),
 
-              // CONTENT
+              // KONTEN BANNER
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
@@ -499,6 +592,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   children: [
                     Text(
                       surah.namaLatin,
+                      textAlign: TextAlign.center,
                       style: GoogleFonts.poppins(
                         color: const Color(0xff8B5E3C),
                         fontWeight: FontWeight.w600,
@@ -508,6 +602,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     const SizedBox(height: 2),
                     Text(
                       surah.arti,
+                      textAlign: TextAlign.center,
                       style: GoogleFonts.poppins(
                         color: const Color(0xff8B5E3C),
                         fontWeight: FontWeight.w500,
@@ -566,6 +661,7 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  // APP BAR - WARNA ASLI VERSI COKELAT
   AppBar _appBar({
     required BuildContext context,
     required Surah Surah,
@@ -582,22 +678,26 @@ class _DetailScreenState extends State<DetailScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             IconButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                icon: Icon(
-                  Icons.arrow_back,
-                  weight: 24,
-                  color: Color(0xffA8AAB6).withOpacity(0.39),
-                )),
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              icon: Icon(
+                Icons.arrow_back,
+                weight: 24,
+                color: const Color(0xffA8AAB6).withOpacity(0.39),
+              ),
+            ),
             const SizedBox(width: 8),
-            Text(
-              Surah.namaLatin,
-              textAlign: TextAlign.start,
-              style: const TextStyle(
-                color: Color(0xff8B5E3C),
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+            Flexible(
+              child: Text(
+                Surah.namaLatin,
+                textAlign: TextAlign.start,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xff8B5E3C),
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             const Spacer(),

@@ -96,16 +96,7 @@ class _SurahTabState extends State<SurahTab> {
   }) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () async {
-        final prefs = await SharedPreferences.getInstance();
-
-        await prefs.setInt(
-          'last_surah',
-          surah.nomor,
-        );
-
-        if (!context.mounted) return;
-
+      onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => DetailScreen(

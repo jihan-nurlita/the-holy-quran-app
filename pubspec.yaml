@@ -40,6 +40,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   google_fonts: ^6.2.1
   curved_navigation_bar: ^1.0.6
+  scrollable_positioned_list: ^0.3.8
   provider: ^6.1.2
 
 dev_dependencies:
