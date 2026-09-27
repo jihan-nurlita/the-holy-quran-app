@@ -91,23 +91,7 @@ class _JuzammaTabState extends State<JuzammaTab> {
   }) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () async {
-        final prefs = await SharedPreferences.getInstance();
-
-        await prefs.setInt(
-          'last_surah',
-          surah.nomor,
-        );
-
-        if (!mounted) return;
-
-        setState(() {
-          lastSurah = surah.nomor;
-          lastAyat = prefs.getInt(
-            'last_ayat_${surah.nomor}',
-          );
-        });
-
+      onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(
