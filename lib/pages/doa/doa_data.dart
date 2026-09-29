@@ -534,7 +534,7 @@ List<DoaModel> doaList = [
   ),
 
   DoaModel(
-    judul: "Shalawat Asyghil",
+    judul: "Shalawat Asyghil ",
     kategori: ["Shalawat"],
     arab:
         "اللَّهُمَّ صَلِّ عَلَى سَيِّدِنَا مُحَمَّدٍ وَأَشْغِلِ الظَّالِمِينَ بِالظَّالِمِينَ وَأَخْرِجْنَا مِنْ بَيْنِهِمْ سَالِمِينَ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ",
